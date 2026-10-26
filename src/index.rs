@@ -7,6 +7,7 @@ use pyo3::{exceptions, prelude::*, types::PyAny};
 use crate::{
     document::{extract_value, Document},
     get_field,
+    immutable_directory::ImmutableDirectory,
     parser_error::QueryParserErrorIntoPy,
     query::Query,
     schema::Schema,
@@ -333,6 +334,25 @@ impl Index {
     fn open(py: Python, path: &str) -> PyResult<Index> {
         py.detach(move || {
             let index = tv::Index::open_in_dir(path).map_err(to_pyerr)?;
+
+            Index::register_custom_text_analyzers(&index);
+
+            let reader = index.reader().map_err(to_pyerr)?;
+            Ok(Index { index, reader })
+        })
+    }
+
+    /// Open an existing index without writing to its directory.
+    ///
+    /// No lock file is created and the directory is not watched, so an
+    /// index in a read-only location can be opened. `writer()` raises
+    /// ValueError, and the index must not change while it is open.
+    #[staticmethod]
+    fn open_read_only(py: Python, path: &str) -> PyResult<Index> {
+        py.detach(move || {
+            let directory = MmapDirectory::open(path).map_err(to_pyerr)?;
+            let index = tv::Index::open(ImmutableDirectory::new(directory))
+                .map_err(to_pyerr)?;
 
             Index::register_custom_text_analyzers(&index);
 

@@ -5,6 +5,7 @@ use pyo3::{exceptions, prelude::*, wrap_pymodule};
 mod document;
 mod explanation;
 mod facet;
+mod immutable_directory;
 mod index;
 mod parser_error;
 mod query;
