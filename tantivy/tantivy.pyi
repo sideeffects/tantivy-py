@@ -655,6 +655,10 @@ class Filter:
         pass
 
     @staticmethod
+    def remove_short(length_limit: int) -> Filter:
+        pass
+
+    @staticmethod
     def stemmer(language: str) -> Filter:
         pass
 
@@ -670,9 +674,22 @@ class Filter:
     def split_compound(constituent_words: list[str]) -> Filter:
         pass
 
+    @staticmethod
+    def intra_word(
+        delims: str = "-_'\"()!@#$%^&*[]{}<>\\|;:,./?`~=+",
+        split_words: bool = True,
+        split_nums: bool = True,
+        merge_words: bool = False,
+        merge_nums: bool = False,
+    ) -> Filter:
+        pass
+
 
 class TextAnalyzer:
     def analyze(self, text: str) -> list[str]:
+        pass
+
+    def analyze_with_positions(self, text: str) -> list[tuple[int, str]]:
         pass
 
 

@@ -1,6 +1,11 @@
 use pyo3::{exceptions::PyValueError, prelude::*};
 use tantivy::tokenizer as tvt;
 
+use crate::{
+    intra_word_filter::IntraWordFilter,
+    remove_short_filter::RemoveShortFilter,
+};
+
 /// All Tantivy's built-in tokenizers in one place.
 /// Each static method, e.g. Tokenizer.simple(),
 /// creates a wrapper around a Tantivy tokenizer.
@@ -136,10 +141,18 @@ pub enum Filter {
     _AsciiFolding {},
     _LowerCaser {},
     _RemoveLong { length_limit: usize },
+    _RemoveShort { length_limit: usize },
     _Stemmer { language: String },
     _StopWord { language: String },
     _CustomStopWord { stopwords: Vec<String> },
     _SplitCompound { constituent_words: Vec<String> },
+    _IntraWord {
+        delims: String,
+        split_words: bool,
+        split_nums: bool,
+        merge_words: bool,
+        merge_nums: bool,
+    },
 }
 
 #[pymethods]
@@ -168,6 +181,18 @@ impl Filter {
     #[staticmethod]
     fn remove_long(length_limit: usize) -> PyResult<Filter> {
         Ok(Filter::_RemoveLong { length_limit })
+    }
+
+    /// RemoveShortFilter
+    ///
+    /// Removes tokens shorter than the limit, as remove_long() removes
+    /// the longer ones. A removed token leaves a gap in the positions.
+    ///
+    /// Args:
+    /// - length_limit (int): min character length of token.
+    #[staticmethod]
+    fn remove_short(length_limit: usize) -> PyResult<Filter> {
+        Ok(Filter::_RemoveShort { length_limit })
     }
 
     /// Stemmer
@@ -226,6 +251,45 @@ impl Filter {
         Ok(Filter::_SplitCompound { constituent_words })
     }
 
+    /// IntraWordFilter
+    ///
+    /// Splits each word into its parts: at delimiter characters, where a
+    /// lower-case letter meets an upper-case one, between letters and
+    /// digits, and dropping a possessive 's. A run of letter parts or of
+    /// digit parts can also be added joined up, right after the run. Each
+    /// part takes the next position and a merged run the position of its
+    /// last part, and the words after it are renumbered, closing any gap a
+    /// filter before it left. Put the filter before Filter.lowercase() and
+    /// before filters that drop tokens.
+    ///
+    /// Args:
+    /// - delims (str, optional): the characters that split a word.
+    /// - split_words (bool, optional): split at case changes,
+    ///   `DataBase` -> `Data`, `Base`.
+    /// - split_nums (bool, optional): split between letters and digits,
+    ///   `utf8` -> `utf`, `8`.
+    /// - merge_words (bool, optional): add each run of letter parts joined
+    ///   up, `snake_case` -> `snake`, `case`, `snakecase`.
+    /// - merge_nums (bool, optional): add each run of digit parts joined
+    ///   up, `42-7` -> `42`, `7`, `427`.
+    #[pyo3(signature=(delims=IntraWordFilter::DELIMS, split_words=true, split_nums=true, merge_words=false, merge_nums=false))]
+    #[staticmethod]
+    fn intra_word(
+        delims: &str,
+        split_words: bool,
+        split_nums: bool,
+        merge_words: bool,
+        merge_nums: bool,
+    ) -> PyResult<Filter> {
+        Ok(Filter::_IntraWord {
+            delims: delims.to_owned(),
+            split_words,
+            split_nums,
+            merge_words,
+            merge_nums,
+        })
+    }
+
     fn __repr__(&self) -> String {
         format!("tantivy.Filter(kind={:?})", &self)
     }
@@ -278,6 +342,24 @@ impl TextAnalyzer {
 
         while token_stream.advance() {
             tokens.push(token_stream.token().text.clone());
+        }
+        tokens
+    }
+
+    /// Tokenize a string, keeping each token's position
+    /// Args:
+    /// - text (string): text to tokenize.
+    /// Returns:
+    /// - list((int, string)): the position and text of each token, as
+    ///   Query.phrase_query() takes them. A filter that drops a token
+    ///   leaves a gap in the positions.
+    fn analyze_with_positions(&mut self, text: &str) -> Vec<(usize, String)> {
+        let mut token_stream = self.analyzer.token_stream(text);
+        let mut tokens = Vec::new();
+
+        while token_stream.advance() {
+            let token = token_stream.token();
+            tokens.push((token.position, token.text.clone()));
         }
         tokens
     }
@@ -371,6 +453,8 @@ impl TextAnalyzerBuilder {
                 Filter::_RemoveLong { length_limit } => builder.filter_dynamic(
                     tvt::RemoveLongFilter::limit(*length_limit),
                 ),
+                Filter::_RemoveShort { length_limit } => builder
+                    .filter_dynamic(RemoveShortFilter::limit(*length_limit)),
                 Filter::_Stemmer { language } => {
                     match parse_language(language) {
                         Ok(lang) => {
@@ -408,6 +492,19 @@ impl TextAnalyzerBuilder {
                         )
                         .unwrap(),
                     ),
+                Filter::_IntraWord {
+                    delims,
+                    split_words,
+                    split_nums,
+                    merge_words,
+                    merge_nums,
+                } => builder.filter_dynamic(IntraWordFilter::new(
+                    delims,
+                    *split_words,
+                    *split_nums,
+                    *merge_words,
+                    *merge_nums,
+                )),
             };
             Ok(TextAnalyzerBuilder {
                 builder: Some(new_builder),
